@@ -15,6 +15,10 @@ A setup for HA (High-Availability) deployment of a [Neo4j Enterprise](https://ne
 * Bootstrap a node with an existing data volume for quick startup.
 * Automatically create users+credentials for read-only and read/write access.
 
+## TLDR
+
+If you want to start right away, [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=neo4j-ha-cluster&templateURL=https://raw.githubusercontent.com/getsocial-rnd/neo4j-aws-ha-cluster/master/cloudformation.yml)
+
 ## Prerequisites:
 
 * Install [Docker](https://docs.docker.com/engine/installation/) to build the image.
