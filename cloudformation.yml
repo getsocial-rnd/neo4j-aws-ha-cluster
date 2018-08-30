@@ -1,0 +1,1009 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the ECS instances.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Select a VPC that allows instances access to the Internet.
+  SubnetID:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Select at two subnets in your selected VPC.
+  NodeSecurityGroups:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: Select at least one additional security group to apply to Neo4j nodes (e.g. your SSH group)
+  DesiredCapacity:
+    Type: Number
+    Default: '1'
+    Description: Number of instances to launch in your ECS cluster.
+  MaxSize:
+    Type: Number
+    Default: '1'
+    Description: Maximum number of instances that can be launched in your ECS cluster.
+  EBSSize:
+    Description: Size in GiBs of data volumes to be created for Neo4j nodes.
+    Type: Number
+    Default: '10'
+  EBSType:
+    Description: Type of data volumes to be created for Neo4j nodes.
+    Type: String
+    AllowedValues: [standard, io1, gp2, sc1, st1]
+  DockerImage:
+    Description: Docker image of Neo4j enterprise, e.g. 111111111111.dkr.ecr.us-east-1.amazonaws.com/neo:c531de3a6655b8c885330ca91b867431760392bf
+    Type: String
+  DockerECRARN:
+    Description: ARN of Docker ECR repository for images, e.g. arn:aws:ecr:us-east-1:111111111111:repository/neo
+    Type: String
+  AdminUser:
+    Description: Username for Neo4j database admin access.
+    Type: String
+  AdminPassword:
+    NoEcho: true
+    Description: Password for Neo4j database admin access.
+    Type: String
+  GuestUser:
+    Description: Username for Neo4j database read-only access.
+    Type: String
+  GuestPassword:
+    NoEcho: true
+    Description: Password for Neo4j database read-only access.
+    Type: String
+  DomainHostedZone:
+    Description: Hosted zone for the domain name to associate with ELB for main cluster.
+    Type: AWS::Route53::HostedZone::Id
+  Domain:
+    Description: Fully-qualified domain name in the hosted zone to associate with ELB for main cluster.
+    Type: String
+  SlaveOnlyDomain:
+    Description: Fully-qualified domain name in the hosted zone to associate with ELB for slave-only nodes.
+    Type: String
+  SnapshotPath:
+    Description: (FOR RESTORE ONLY) Start claster from a database backup snapshot (zip). Full S3 path.
+    Type: String
+  ClusterInstanceType:
+    Description: EC2 instance type for Neo4J cluster
+    Type: String
+    Default: t2.medium
+    AllowedValues: [t2.medium, t2.large, m3.medium, m3.large,
+      m3.xlarge, m3.2xlarge, m4.large, m4.xlarge, m4.2xlarge, m4.4xlarge, m4.10xlarge, m5.large]
+      # NOTE: These are commented out just because MemoryMaps are not defined for them.
+      # Feel free to extend :)
+      #
+      # c4.large, c4.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge, c3.large, c3.xlarge,
+      # c3.2xlarge, c3.4xlarge, c3.8xlarge, r3.large, r3.xlarge, r3.2xlarge, r3.4xlarge,
+      # r3.8xlarge, i2.xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge]
+    ConstraintDescription: Please choose a valid instance type.
+  SlaveOnlyInstanceType:
+    Description: EC2 instance type for Neo4J SlaveOnly node
+    Type: String
+    Default: t2.medium
+    AllowedValues: [t2.medium, t2.large, m3.medium, m3.large,
+      m3.xlarge, m3.2xlarge, m4.large, m4.xlarge, m4.2xlarge, m4.4xlarge, m4.10xlarge, m5.large]
+      # NOTE: These are commented out just because MemoryMaps are not defined for them.
+      # Feel free to extend :)
+      #
+      # c4.large, c4.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge, c3.large, c3.xlarge,
+      # c3.2xlarge, c3.4xlarge, c3.8xlarge, r3.large, r3.xlarge, r3.2xlarge, r3.4xlarge,
+      # r3.8xlarge, i2.xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge]
+    ConstraintDescription: Please choose a valid instance type.
+  SNSTopicArn:
+    Description: SNS topic to send CloudWatch Alarms notifications (if you leave it empty new topic will be created)
+    Type: String
+  AllowUpgrade:
+    Description: Enable this flag to allow upgrading existing data to newer Neo4j version if such is found.
+    Type: String
+    Default: false
+    AllowedValues: [false, true]
+  Mode:
+    Description: Mode for Neo4j nodes. Leave HA unless doing Neo4j migration.
+    Type: String
+    Default: HA
+    AllowedValues: [SINGLE, HA, ARBITER, CORE, READ_REPLICA]
+  SlaveMode:
+    Description: Mode for Neo4j slave-only mode. Leave HA unless doing Neo4j migration.
+    Type: String
+    Default: HA
+    AllowedValues: [SINGLE, HA, ARBITER, CORE, READ_REPLICA]
+  AcceptLicense:
+    Description: |
+      In order to use Neo4j Enterprise Edition you must accept the license agreement.
+      (c) Network Engine for Objects in Lund AB.  2017.  All Rights Reserved.
+      Use of this Software without a proper commercial license with Neo4j,
+      Inc. or its affiliates is prohibited.
+      Email inquiries can be directed to: licensing@neo4j.com
+      More information is also available at: https://neo4j.com/licensing/
+      Do you agree?
+    Type: String
+    Default: no
+    AllowedValues: [yes, no]
+Mappings:
+  AWSRegionToAMI:
+    us-east-2:
+      AMIID: ami-956e52f0
+    us-east-1:
+      AMIID: ami-5253c32d
+    us-west-2:
+      AMIID: ami-d2f489aa
+    us-west-1:
+      AMIID: ami-6b81980b
+    eu-west-2:
+      AMIID: ami-3622cf51
+    eu-west-3:
+      AMIID: ami-ca75c4b7
+    eu-west-1:
+      AMIID: ami-c91624b0
+    eu-central-1:
+      AMIID: ami-10e6c8fb
+    ap-northeast-2:
+      AMIID: ami-7c69c112
+    ap-northeast-1:
+      AMIID: ami-f3f8098c
+    ap-southeast-2:
+      AMIID: ami-bc04d5de
+    ap-southeast-1:
+      AMIID: ami-b75a6acb
+    ca-central-1:
+      AMIID: ami-da6cecbe
+    ap-south-1:
+      AMIID: ami-c7072aa8
+    sa-east-1:
+      AMIID: ami-a1e2becd
+  MemoryMap:
+    t2.medium:   # 4 GB total
+      ContainerMemory: 3700
+      JavaHeap: 2000m
+      JavaPage: 800m
+      ContainerMemorySlave: 2500
+      JavaHeapSlave: 1200m
+      JavaPageSlave: 900m
+      ContainerMemoryBackup: 1200
+      JavaPageBackup: 600m
+    t2.large:    # 8 GB total
+      ContainerMemory: 7000
+      JavaHeap: 3000m
+      JavaPage: 3000m
+      ContainerMemorySlave: 5200
+      JavaHeapSlave: 2500m
+      JavaPageSlave: 2300m
+      ContainerMemoryBackup: 2200
+      JavaPageBackup: 1100m
+    m3.medium:   ## 3.75 GB total
+      ContainerMemory: 2750
+      JavaHeap: 1100m
+      JavaPage: 1100m
+      ContainerMemorySlave: 2200
+      JavaHeapSlave: 1000m
+      JavaPageSlave: 800m
+      ContainerMemoryBackup: 1100
+      JavaPageBackup: 550m
+    m3.large:    ## 7.5 GB total
+      ContainerMemory: 6750
+      JavaHeap: 2800m
+      JavaPage: 2800m
+      ContainerMemorySlave: 4700
+      JavaHeapSlave: 2200m
+      JavaPageSlave: 2200m
+      ContainerMemoryBackup: 2000
+      JavaPageBackup: 1000m
+    m3.xlarge:   ## 15 GB total
+      ContainerMemory: 14000
+      JavaHeap: 6300m
+      JavaPage: 6300m
+      ContainerMemorySlave: 10000
+      JavaHeapSlave: 5000m
+      JavaPageSlave: 4000m
+      ContainerMemoryBackup: 3200
+      JavaPageBackup: 1600m
+    m3.2xlarge:   ## 30 GB total
+      ContainerMemory: 29000
+      JavaHeap: 13000m
+      JavaPage: 13000m
+      ContainerMemorySlave: 24000
+      JavaHeapSlave: 11000m
+      JavaPageSlave: 11000m
+      ContainerMemoryBackup: 5000
+      JavaPageBackup: 2500m
+    m4.large:    ## 8 GB total
+      ContainerMemory: 7000
+      JavaHeap: 3000m
+      JavaPage: 3000m
+      ContainerMemorySlave: 4700
+      JavaHeapSlave: 1100m
+      JavaPageSlave: 2300m
+      ContainerMemoryBackup: 2500
+      JavaPageBackup: 1500m
+    m5.large:    ## 8 GB total
+      ContainerMemory: 7000
+      JavaHeap: 3000m
+      JavaPage: 3000m
+      ContainerMemorySlave: 4700
+      JavaHeapSlave: 1100m
+      JavaPageSlave: 2300m
+      ContainerMemoryBackup: 2500
+      JavaPageBackup: 1500m
+    m4.xlarge:   ## 16 GB total
+      ContainerMemory: 15000
+      JavaHeap: 6800m
+      JavaPage: 6800m
+      ContainerMemorySlave: 10000
+      JavaHeapSlave: 5500m
+      JavaPageSlave: 5500m
+      ContainerMemoryBackup: 5000
+      JavaPageBackup: 2500m
+    m4.2xlarge:   ## 32 GB total
+      ContainerMemory: 31000
+      JavaHeap: 13500m
+      JavaPage: 13500m
+      ContainerMemorySlave: 26000
+      JavaHeapSlave: 11500m
+      JavaPageSlave: 11500m
+      ContainerMemoryBackup: 5000
+      JavaPageBackup: 2500m
+    m4.4xlarge:   ## 64 GB total
+      ContainerMemory: 63000
+      JavaHeap: 28000m
+      JavaPage: 28000m
+      ContainerMemorySlave: 50000
+      JavaHeapSlave: 23000m
+      JavaPageSlave: 23000m
+      ContainerMemoryBackup: 12000
+      JavaPageBackup: 6000m
+    m4.10xlarge:   ## 160 GB total
+      ContainerMemory: 155000
+      JavaHeap: 72000m
+      JavaPage: 72000m
+      ContainerMemorySlave: 120000
+      JavaHeapSlave: 55000m
+      JavaPageSlave: 55000m
+      ContainerMemoryBackup: 32000
+      JavaPageBackup: 16000m
+    m4.16xlarge:   ## 256 GB total
+      ContainerMemory: 250000
+      JavaHeap: 120000m
+      JavaPage: 120000m
+      ContainerMemorySlave: 200000
+      JavaHeapSlave: 95000m
+      JavaPageSlave: 95000m
+      ContainerMemoryBackup: 45000
+      JavaPageBackup: 22500m
+Conditions:
+  PerformRestore: !Not [!Equals [ !Ref SnapshotPath, "" ]]
+  CreateSNSTopic: !Equals [ !Ref SNSTopicArn, "" ]
+  IsHA: !Equals [ !Ref Mode, "HA" ]
+  SingleMaster: !And
+    - !Equals [ !Ref MaxSize, '1' ]
+    - !Equals [ !Ref DesiredCapacity, '1' ]
+  AcceptedLicense: !Equals [!Ref AcceptLicense, "true"]
+Resources:
+  Neo4jCluster:
+    Type: AWS::ECS::Cluster
+  Neo4jSlaveOnly:
+    Type: AWS::ECS::Cluster
+  Neo4jSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Neo4j Cluster Security Group
+      VpcId: !Ref 'VpcId'
+  Neo4jELBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Neo4j ELB Security Group
+      VpcId: !Ref 'VpcId'
+#### Start of inbound rules for cluster nodes communications with each other
+  Neo4jSecurityGroupHTTPinboundFromCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '7473'
+      ToPort: '7474'
+      SourceSecurityGroupId: !Ref 'Neo4jSecurityGroup'
+  Neo4jSecurityGroupBoltInboundFromCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '7687'
+      ToPort: '7687'
+      SourceSecurityGroupId: !Ref 'Neo4jSecurityGroup'
+  Neo4jSecurityGroupDiscoveryInboundFromCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '5000'
+      ToPort: '5001'
+      SourceSecurityGroupId: !Ref 'Neo4jSecurityGroup'
+  Neo4jSecurityGroupTransactionInboundFromCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '6000'
+      ToPort: '6001'
+      SourceSecurityGroupId: !Ref 'Neo4jSecurityGroup'
+  Neo4jSecurityGroupRaftInboundFromCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '7000'
+      ToPort: '7000'
+      SourceSecurityGroupId: !Ref 'Neo4jSecurityGroup'
+#### End of inbound rules for cluster nodes communications with each other
+####
+#### Start of inbound rules for cluster communication with ELB
+  Neo4jSecurityGroupHTTPinboundFromELB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '7473'
+      ToPort: '7474'
+      SourceSecurityGroupId: !Ref 'Neo4jELBSecurityGroup'
+  Neo4jSecurityGroupBoltInboundFromELB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '7687'
+      ToPort: '7687'
+      SourceSecurityGroupId: !Ref 'Neo4jELBSecurityGroup'
+#### End of rule
+####
+#### Start of inbound rules for Neo4j ELB
+  Neo4jELBSecurityGroupHTTPinbound:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jELBSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '7473'
+      ToPort: '7474'
+      CidrIp: 0.0.0.0/0
+  Neo4jELBSecurityGroupBoltInbound:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref 'Neo4jELBSecurityGroup'
+      IpProtocol: tcp
+      FromPort: '7687'
+      ToPort: '7687'
+      CidrIp: 0.0.0.0/0
+  Neo4jClusterTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-cluster"
+      NetworkMode: host
+      Volumes:
+        - Name: devices
+          Host:
+            SourcePath: "/dev"
+      ContainerDefinitions:
+      - Name: neo4j
+        Essential: 'true'
+        Privileged: 'true'
+        Image: !Ref 'DockerImage'
+        MemoryReservation: !FindInMap [MemoryMap, !Ref "ClusterInstanceType", 'ContainerMemory']
+        MountPoints:
+        - ContainerPath: /dev
+          SourceVolume: devices
+          ReadOnly: false
+        Environment:
+        - Name: NEO4J_dbms_allow__upgrade
+          Value: !Ref AllowUpgrade
+        - Name: NEO4J_dbms_mode
+          Value: !Ref Mode
+        - Name: NEO4J_dbms_memory_heap_maxSize
+          Value: !FindInMap [MemoryMap, !Ref "ClusterInstanceType", 'JavaHeap']
+        - Name: NEO4J_dbms_memory_pagecache_size
+          Value: !FindInMap [MemoryMap, !Ref "ClusterInstanceType", 'JavaPage']
+        - Name: NEO4J_ha_tx__push__factor
+          Value: '1'
+        - Name: NEO4J_ha_pull__interval
+          Value: '0'
+        - Name: NEO4J_AUTH
+          Value: !Join ['', [!Ref AdminUser, '/', !Ref AdminPassword]]
+        - Name: NEO4J_GUEST_AUTH
+          Value: !Join ['', [!Ref GuestUser, '/', !Ref GuestPassword]]
+        - Name: NEO4J_EBS_TYPE
+          Value: !Ref EBSType
+        - Name: NEO4J_EBS_SIZE
+          Value: !Ref EBSSize
+        - Name: SNAPSHOT_PATH
+          Value: !Ref SnapshotPath
+        - Name: AWS_BACKUP_BUCKET
+          Value: !Ref BackupBucket
+        - Name: STACK_NAME
+          Value: !Ref AWS::StackName
+        - Name: NEO4J_ACCEPT_LICENSE_AGREEMENT
+          Value: !If [AcceptedLicense, 'yes', 'no']
+        Ulimits:
+          - Name: nofile
+            HardLimit: 400000
+            SoftLimit: 400000
+  Neo4jSlaveOnlyTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-slave-only"
+      NetworkMode: host
+      Volumes:
+        - Name: devices
+          Host:
+            SourcePath: "/dev"
+        - Name: exports
+          Host:
+            SourcePath: "/tmp/exports"
+      ContainerDefinitions:
+      - Name: neo4j
+        Essential: 'true'
+        Privileged: 'true'
+        Image: !Ref 'DockerImage'
+        Memory: !FindInMap [MemoryMap, !Ref "SlaveOnlyInstanceType", 'ContainerMemorySlave']
+        MountPoints:
+        - ContainerPath: /tmp/exports
+          SourceVolume: exports
+          ReadOnly: false
+        - ContainerPath: /dev
+          SourceVolume: devices
+          ReadOnly: false
+        Environment:
+        - Name: NEO4J_ha_slave__only
+          Value: true
+        - Name: NEO4J_dbms_allow__upgrade
+          Value: !Ref AllowUpgrade
+        - Name: NEO4J_dbms_mode
+          Value: !Ref SlaveMode
+        - Name: NEO4J_dbms_memory_heap_maxSize
+          Value: !FindInMap [MemoryMap, !Ref "SlaveOnlyInstanceType", 'JavaHeapSlave']
+        - Name: NEO4J_dbms_memory_pagecache_size
+          Value: !FindInMap [MemoryMap, !Ref "SlaveOnlyInstanceType", 'JavaPageSlave']
+        - Name: NEO4J_AUTH
+          Value: !Join ['', [!Ref AdminUser, '/', !Ref AdminPassword]]
+        - Name: NEO4J_GUEST_AUTH
+          Value: !Join ['', [!Ref GuestUser, '/', !Ref GuestPassword]]
+        - Name: NEO4J_EBS_TYPE
+          Value: !Ref EBSType
+        - Name: NEO4J_EBS_SIZE
+          Value: !Ref EBSSize
+        - Name: SNAPSHOT_PATH
+          Value: !Ref SnapshotPath
+        - Name: AWS_BACKUP_BUCKET
+          Value: !Ref BackupBucket
+        - Name: STACK_NAME
+          Value: !Ref AWS::StackName
+        - Name: SLAVE_MODE
+          Value: !Ref SlaveMode
+        - Name: NEO4J_ACCEPT_LICENSE_AGREEMENT
+          Value: !If [AcceptedLicense, 'yes', 'no']
+        Ulimits:
+          - Name: nofile
+            HardLimit: 400000
+            SoftLimit: 400000
+  Neo4jClusterELB:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Scheme: internal
+      Subnets: !Ref 'SubnetID'
+      Listeners:
+      - LoadBalancerPort: '7687'
+        InstancePort: '7687'
+        Protocol: TCP
+      - LoadBalancerPort: '7474'
+        InstancePort: '7474'
+        Protocol: HTTP
+      SecurityGroups:
+        - !Ref 'Neo4jELBSecurityGroup'
+      HealthCheck:
+        Target: !If [IsHA, "HTTP:7474/db/manage/server/ha/master", "HTTP:7474/"]
+        HealthyThreshold: '2'
+        UnhealthyThreshold: '2'
+        Interval: '5'
+        Timeout: '3'
+      ConnectionSettings:
+        IdleTimeout: 3600
+  Neo4jSlaveOnlyELB:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Scheme: internal
+      Subnets: !Ref 'SubnetID'
+      Listeners:
+      - LoadBalancerPort: '7687'
+        InstancePort: '7687'
+        Protocol: TCP
+      - LoadBalancerPort: '7474'
+        InstancePort: '7474'
+        Protocol: HTTP
+      SecurityGroups:
+        - !Ref 'Neo4jELBSecurityGroup'
+      HealthCheck:
+        Target: HTTP:7474/db/manage/server/ha/slave
+        HealthyThreshold: '2'
+        UnhealthyThreshold: '2'
+        Interval: '5'
+        Timeout: '3'
+      ConnectionSettings:
+        IdleTimeout: 3600
+  Neo4jClusterAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref 'SubnetID'
+      LaunchConfigurationName: !Ref 'Neo4jClusterLanuchConfig'
+      MinSize: '1'
+      MaxSize: !Ref 'MaxSize'
+      DesiredCapacity: !Ref 'DesiredCapacity'
+      LoadBalancerNames:
+        - !Ref 'Neo4jClusterELB'
+      Tags:
+      - Key: App
+        Value: Neo4j
+        PropagateAtLaunch: true
+      - Key: Cluster
+        Value: "true"
+        PropagateAtLaunch: true
+      - Key: SlaveOnly
+        Value: "false"
+        PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    # UpdatePolicy:
+    #   AutoScalingReplacingUpdate:
+    #     WillReplace: 'true'
+  Neo4jSlaveOnlyAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref 'SubnetID'
+      LaunchConfigurationName: !Ref 'Neo4jSlaveOnlyLanuchConfig'
+      MinSize: '1'
+      MaxSize: '1'
+      DesiredCapacity: '1'
+      LoadBalancerNames:
+        - !Ref 'Neo4jSlaveOnlyELB'
+      Tags:
+      - Key: App
+        Value: Neo4j
+        PropagateAtLaunch: true
+      - Key: Cluster
+        Value: "false"
+        PropagateAtLaunch: true
+      - Key: SlaveOnly
+        Value: "true"
+        PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    # UpdatePolicy:
+    #   AutoScalingReplacingUpdate:
+    #     WillReplace: 'true'
+  Neo4jClusterELBDomain:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref DomainHostedZone
+      Name: !Sub "${Domain}."
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt Neo4jClusterELB.CanonicalHostedZoneNameID
+        DNSName: !GetAtt Neo4jClusterELB.DNSName
+  Neo4jSlaveOnlyELBDomain:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref DomainHostedZone
+      Name: !Sub "${SlaveOnlyDomain}."
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt Neo4jSlaveOnlyELB.CanonicalHostedZoneNameID
+        DNSName: !GetAtt Neo4jSlaveOnlyELB.DNSName
+  Neo4jClusterLanuchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          files:
+            /etc/security/limits.conf:
+              content: |
+                *               soft    nofile  400000
+                *               hard    nofile  400000
+                root            soft    nofile  400000
+                root            hard    nofile  400000
+    Properties:
+      ImageId: !FindInMap [AWSRegionToAMI, !Ref 'AWS::Region', AMIID]
+      SecurityGroups: !Split
+        - ","
+        - !Sub
+          - "${idList},${Neo4jSecurityGroup}"
+          - idList: !Join [",",!Ref "NodeSecurityGroups"]
+      InstanceType: !Ref 'ClusterInstanceType'
+      IamInstanceProfile: !Ref 'Neo4jInstanceProfile'
+      KeyName: !Ref 'KeyName'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          echo ECS_CLUSTER=${Neo4jCluster} >> /etc/ecs/ecs.config
+          yum install -y aws-cfn-bootstrap
+          # Run cfn-init
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jClusterLanuchConfig --region ${AWS::Region}
+          # Signal success
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jClusterAutoScalingGroup --region ${AWS::Region}
+  Neo4jSlaveOnlyLanuchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          files:
+            /etc/security/limits.conf:
+              content: |
+                *               soft    nofile  400000
+                *               hard    nofile  400000
+                root            soft    nofile  400000
+                root            hard    nofile  400000
+    Properties:
+      ImageId: !FindInMap [AWSRegionToAMI, !Ref 'AWS::Region', AMIID]
+      SecurityGroups: [!Ref 'Neo4jSecurityGroup', 'sg-521f642f'] ## autogenerated group and our SSH group
+      InstanceType: !Ref 'SlaveOnlyInstanceType'
+      IamInstanceProfile: !Ref 'Neo4jInstanceProfile'
+      KeyName: !Ref 'KeyName'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          echo ECS_CLUSTER=${Neo4jSlaveOnly} >> /etc/ecs/ecs.config
+          yum install -y aws-cfn-bootstrap
+          # Run cfn-init
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jSlaveOnlyLanuchConfig --region ${AWS::Region}
+          # Signal success
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jSlaveOnlyAutoScalingGroup --region ${AWS::Region}
+  Neo4jClusterECSservice:
+    Type: AWS::ECS::Service
+    DependsOn: Neo4jClusterELB
+    Properties:
+      Cluster: !Ref 'Neo4jCluster'
+      DesiredCount: !Ref 'DesiredCapacity'
+      DeploymentConfiguration:
+        MinimumHealthyPercent: !If [SingleMaster, '0', '50']
+      TaskDefinition: !Ref 'Neo4jClusterTask'
+      PlacementConstraints:
+        - Type: distinctInstance  ## aka OneTaskPerHost
+  Neo4jSlaveOnlyECSservice:
+    Type: AWS::ECS::Service
+    DependsOn: Neo4jSlaveOnlyELB
+    Properties:
+      Cluster: !Ref 'Neo4jSlaveOnly'
+      DesiredCount: 1
+      DeploymentConfiguration:
+        MinimumHealthyPercent: '0'
+      TaskDefinition: !Ref 'Neo4jSlaveOnlyTask'
+      PlacementConstraints:
+        - Type: distinctInstance  ## aka OneTaskPerHost
+  S3RestorePolicy:
+    Condition: PerformRestore
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${AWS::StackName}-s3-restore-access"
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - 's3:GetObject'
+          Resource: !Sub "arn:aws:s3:::${SnapshotPath}"
+      Roles:
+        - Ref: "EC2Role"
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ec2.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+      - PolicyName: ecs-service
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action: 
+            - 'ecs:CreateCluster'
+            - 'ecs:DeregisterContainerInstance'
+            - 'ecs:DiscoverPollEndpoint'
+            - 'ecs:Poll'
+            - 'ecs:RegisterContainerInstance'
+            - 'ecs:StartTelemetrySession'
+            - 'ecs:Submit*'
+            - 'autoscaling:Describe*'
+            - 'ecr:GetAuthorizationToken'
+            ## needed for Neo4j startup script to run on a neo4j-data EBS volume.
+            - 'ec2:Describe*'
+            - 'ec2:AttachVolume'
+            - 'ec2:CreateVolume'
+            - 'ec2:CreateTags'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - 'ecr:GetDownloadUrlForLayer'
+            - 'ecr:BatchGetImage'
+            - 'ecr:BatchCheckLayerAvailability'
+            Resource: !Ref DockerECRARN
+      - PolicyName: s3-backup-access
+        PolicyDocument:
+         Statement:
+          - Effect: Allow
+            Action:
+            - 's3:ListBucket'
+            Resource: !GetAtt BackupBucket.Arn
+          - Effect: Allow
+            Action:
+            - 's3:PutObject'
+            - 's3:GetObject'
+            Resource: !Sub "${BackupBucket.Arn}/*"
+  Neo4jInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles: [!Ref 'EC2Role']
+  Neo4jBackupTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-cluster-backup"
+      Volumes:
+        - Name: backups
+          Host:
+            SourcePath: "/opt/backups/"
+      ContainerDefinitions:
+      - Name: neo4j-backup
+        Command:
+          - backup
+        Essential: 'true'
+        Image: !Ref 'DockerImage'
+        Memory: !FindInMap [MemoryMap, !Ref "ClusterInstanceType", 'ContainerMemoryBackup']
+        MountPoints:
+        - ContainerPath: /tmp
+          SourceVolume: backups
+          ReadOnly: false
+        Environment:
+        - Name: NEO4J_dbms_memory_pagecache_size
+          Value: !FindInMap [MemoryMap, !Ref "ClusterInstanceType", 'JavaPageBackup']
+        - Name: BACKUP_DIR
+          Value: "/tmp"
+        - Name: BACKUP_FROM
+          Value: this_instance
+        - Name: AWS_BACKUP_BUCKET
+          Value: !Ref BackupBucket
+        - Name: STACK_NAME
+          Value: !Ref AWS::StackName
+        - Name: NEO4J_ACCEPT_LICENSE_AGREEMENT
+          Value: !If [AcceptedLicense, 'yes', 'no']
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-cluster-backup"
+      AccessControl: Private
+      LifecycleConfiguration:
+        Rules:
+        - ExpirationInDays: 1
+          Id: !Sub "hourly-snapshots-expiration"
+          Prefix: hourly/
+          Status: Enabled
+        - ExpirationInDays: 14
+          Id: !Sub "daily-snapshots-expiration"
+          Prefix: daily/
+          Status: Enabled
+  BackupEventRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Description: "Schedule to run Neo4j-cluster backups"
+      Name: !Sub "${AWS::StackName}-backup"
+      ScheduleExpression: rate(1 hour)
+      State: ENABLED
+      Targets:
+      - Arn: !GetAtt Neo4jSlaveOnly.Arn
+        Id: !Sub "${AWS::StackName}-backup-cluster"
+        EcsParameters: 
+          TaskCount: 1
+          TaskDefinitionArn: !Ref Neo4jBackupTask
+        RoleArn: !GetAtt BackupEventRole.Arn
+  BackupEventRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [events.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+      - PolicyName: event-run-task
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action: 
+            - 'ecs:RunTask'
+            Resource: !Ref Neo4jBackupTask
+  Neo4jSNSTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateSNSTopic
+  Neo4jClusterHighMemory:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-high-mem"
+      AlarmDescription: !Sub  "${AWS::StackName} HIGH ECS Memory Utilization."
+      Namespace: AWS/ECS
+      MetricName: MemoryUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref Neo4jCluster
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+  Neo4jClusterHighCPU:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-high-cpu"
+      AlarmDescription: !Sub  "${AWS::StackName} HIGH ECS CPU Utilization."
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref Neo4jCluster
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+  Neo4jSlaveOnlyHighMemory:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-slave-only-high-mem"
+      AlarmDescription: !Sub  "${AWS::StackName} HIGH ECS Memory Utilization."
+      Namespace: AWS/ECS
+      MetricName: MemoryUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref Neo4jSlaveOnly
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+  Neo4jSlaveOnlyHighCPU:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-slave-only-high-cpu"
+      AlarmDescription: !Sub  "${AWS::StackName} HIGH ECS CPU Utilization."
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref Neo4jSlaveOnly
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+  Neo4jClusterHealthyHostCountAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-healthy-host-count"
+      AlarmDescription: !Sub "${AWS::StackName} one healthy host(master) should be passing healthchecks all the time"
+      Namespace: AWS/ELB
+      MetricName: HealthyHostCount
+      Dimensions:
+        - Name: LoadBalancerName
+          Value: !Ref Neo4jClusterELB
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+  Neo4jSlaveOnlyHealthyHostCountAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-slave-only-healthy-host-count"
+      AlarmDescription: !Sub "${AWS::StackName} one healthy host should be passing healthchecks all the time"
+      Namespace: AWS/ELB
+      MetricName: HealthyHostCount
+      Dimensions:
+        - Name: LoadBalancerName
+          Value: !Ref Neo4jSlaveOnlyELB
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+  TaskMonitorEventRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Name: !Sub "${AWS::StackName}-ecs-task-monitor"
+      Description: "Event to notify us of changed status of ECS Task"
+      EventPattern: !Sub |
+        {
+          "source": [
+            "aws.ecs"
+          ],
+          "detail-type": [
+            "ECS Task State Change"
+          ],
+          "detail": {
+            "clusterArn": [
+              "${Neo4jCluster.Arn}"
+            ],
+            "taskDefinitionArn": [
+              "${Neo4jClusterTask}"
+            ],
+            "stoppedReason": ["Essential container in task exited"]
+          }
+        }
+      State: ENABLED
+      Targets:
+        - Arn: !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+          Id: !Sub "${AWS::StackName}-ecs-task-monitor"
+          Input: !Sub |
+            {
+              "message": "Essential container in task exited",
+              "ecs_cluster": "${Neo4jCluster}"
+            }
+  TaskMonitorEventSNSPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Id: !Sub ${AWS::StackName}-ecs-task-monitor
+        Version: 2012-10-17
+        Statement:
+        ### this is copy of default TopicPolicy since its being overwritten by cloudformation 
+        ### and cloudwatch alarms will stop sending events to this topic
+        - Sid: default-sns-policy
+          Effect: Allow
+          Principal:
+            AWS: "*"
+          Action:
+          - sns:Publish
+          - sns:RemovePermission
+          - sns:SetTopicAttributes
+          - sns:DeleteTopic
+          - sns:ListSubscriptionsByTopic
+          - sns:GetTopicAttributes
+          - sns:Receive
+          - sns:AddPermission
+          - sns:Subscribe
+          Resource: !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+          Condition:
+            StringEquals:
+              AWS:SourceOwner: !Ref AWS::AccountId
+        ### When creating SNS Topic EvetRuleTarget WebConsole adding next policies
+        ### automatically, in our case we need to define them
+        - Sid: events-sns-permissions
+          Effect: Allow
+          Principal:
+            Service: "events.amazonaws.com"
+          Action: sns:Publish
+          Resource: !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+      Topics:
+      - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+Outputs:
+  Neo4jClusterECSservice:
+    Value: !Ref 'Neo4jClusterECSservice'
+  Neo4jCluster:
+    Value: !Ref 'Neo4jCluster'
+  Neo4jClusterELB:
+    Description: ELB DNS Endpoint
+    Value: !Join [' ', [!GetAtt Neo4jClusterELB.DNSName, !Ref Neo4jClusterELB]]
+  Neo4jSlaveOnlyELB:
+    Description: ELB DNS Endpoint
+    Value: !Join [' ', [!GetAtt Neo4jSlaveOnlyELB.DNSName, !Ref Neo4jSlaveOnlyELB]]
+  Neo4jClusterTask:
+    Value: !Ref 'Neo4jClusterTask'
