@@ -70,9 +70,7 @@ Ports open:
 
 4. Feel free to modify `cloudformation.yml` in any way you like before spinning up infrastructure, however most of the things are customizable via parameters.
 
-5. [Create a Cloud Formation stack](https://console.aws.amazon.com/cloudformation/home#/stacks/new) using `cloudformation.yml` or just click:
-
-    [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=neo4j-ha-cluster&templateURL=https://raw.githubusercontent.com/getsocial-rnd/neo4j-aws-ha-cluster/master/cloudformation.yml)
+5. [Create a Cloud Formation stack](https://console.aws.amazon.com/cloudformation/home#/stacks/new) using `cloudformation.yml`.
 
    During this step you will define all the resources you need and configure Docker image with Neo4j for ECS.
     Please make sure to set 2 tags for your stack (on "Options" page):
