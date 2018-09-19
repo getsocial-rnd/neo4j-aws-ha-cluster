@@ -2,6 +2,8 @@
 
 A setup for HA (High-Availability) deployment of a [Neo4j Enterprise](https://neo4j.com/subscriptions/#editions) cluster on top of [AWS ECS](https://aws.amazon.com/ecs/).
 
+You can obtain Neo4j from the [official website](https://neo4j.com/). Please contact sales@neo4j.com for Enterprise licensing.
+
 ### Includes:
 - Customizable CloudFormation template.
 - Custom docker image on top [official Neo4j image](https://hub.docker.com/_/neo4j/). Current version - *Neo4j 3.4.6*
