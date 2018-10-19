@@ -1,8 +1,21 @@
 ## Upgrade guide
 
+Information below up-to-date with Neo4j 3.4.6.
+
+### Patch version upgrades
+
+If you upgrade between patch versions, you might use
+[rolling upgrade](https://neo4j.com/docs/operations-manual/current/upgrade/causal-cluster/#cc-upgrade-rolling)
+just by updating each instance separately. However it is possible *only when a store format upgrade is not needed (see release notes for particular change)*.
+
+One step: build a new version of docker image (based on newest official Neo4j Docker image), and use that image in CloudFormation (see step #1 in Generic Upgrades section below).
+
+
+### Generic upgrades
+
 (Based on [official Neo4j guide](https://neo4j.com/docs/operations-manual/current/upgrade/))
 
-Currently HA Neo4j does not allow zero-downtime database upgrade.
+Moves between minor/major versions do not allow zero-downtime (as of the 3.4.6) database upgrade.
 
 You want to make use of CloudFormation (CF) parameters to tweak upgrade steps, as follows below.
 
