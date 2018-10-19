@@ -1,6 +1,6 @@
 ## Upgrade guide
 
-Information below up-to-date with Neo4j 3.4.6.
+Information below is up-to-date with Neo4j 3.4.6.
 
 ### Patch version upgrades
 
