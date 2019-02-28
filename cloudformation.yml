@@ -37,6 +37,7 @@ Parameters:
   AdminUser:
     Description: Username for Neo4j database admin access.
     Type: String
+    AllowedValues: [neo4j]
   AdminPassword:
     NoEcho: true
     Description: Password for Neo4j database admin access.
