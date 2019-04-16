@@ -1,8 +1,8 @@
-FROM  neo4j:3.4.6-enterprise
+FROM  neo4j:3.5.4-enterprise
 
-RUN apk update && apk add --no-cache --quiet \
-    e2fsprogs \
-    curl \
+RUN apk add --no-cache \
+	e2fsprogs \
+	curl \
 	zip \
 	unzip \
 	python py-pip && \
@@ -11,7 +11,10 @@ RUN apk update && apk add --no-cache --quiet \
 
 # Install plugins
 RUN mkdir -p /var/lib/neo4j/plugins
-RUN curl -L -s https://github.com/neo4j-contrib/neo4j-apoc-procedures/releases/download/3.4.0.1/apoc-3.4.0.1-all.jar > /var/lib/neo4j/plugins/apoc-3.4.0.1-all.jar
+
+ENV NEO4J_APOC_VERSION=3.5.0.2
+
+RUN curl -L -s https://github.com/neo4j-contrib/neo4j-apoc-procedures/releases/download/$NEO4J_APOC_VERSION/apoc-$NEO4J_APOC_VERSION-all.jar > /var/lib/neo4j/plugins/apoc-$NEO4J_APOC_VERSION-all.jar
 RUN curl -L -s http://central.maven.org/maven2/mysql/mysql-connector-java/6.0.6/mysql-connector-java-6.0.6.jar > /var/lib/neo4j/plugins/mysql-connector-java-6.0.6.jar
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
