@@ -108,13 +108,39 @@ restore_neo4j() {
 
     echo "Running restore..."
 
-    /var/lib/neo4j/bin/neo4j-admin restore --from="$BACKUP_DIR/$BACKUP_NAME" --database=graph.db --force
+    su-exec ${userid} bin/neo4j-admin restore --from="$BACKUP_DIR/$BACKUP_NAME" --database=graph.db --force
     status=$?
     if [ "$status" -ne 0 ] ; then
         echo "Error: failed to restore from snapshot."
         exit 1
     fi
 }
+
+# copy of the piece of code from the original docker-entrypoint.sh
+# https://github.com/neo4j/docker-neo4j-publish/blob/5a80e2a88fb92e4b10b12d79b28a8070ab2d13fb/3.5.4/enterprise/docker-entrypoint.sh#L188-L206
+# needed to be able to save configurations after we modified it in the our extension script
+save_config() {
+    # list env variables with prefix NEO4J_ and create settings from them
+    unset NEO4J_AUTH NEO4J_SHA256 NEO4J_TARBALL
+    for i in $( set | grep ^NEO4J_ | awk -F'=' '{print $1}' | sort -rn ); do
+        setting=$(echo ${i} | sed 's|^NEO4J_||' | sed 's|_|.|g' | sed 's|\.\.|_|g')
+        value=$(echo ${!i})
+        # Don't allow settings with no value or settings that start with a number (neo4j converts settings to env variables and you cannot have an env variable that starts with a number)
+        if [[ -n ${value} ]]; then
+            if [[ ! "${setting}" =~ ^[0-9]+.*$ ]]; then
+                if grep -q -F "${setting}=" "${NEO4J_HOME}"/conf/neo4j.conf; then
+                    # Remove any lines containing the setting already
+                    sed --in-place "/^${setting}=.*/d" "${NEO4J_HOME}"/conf/neo4j.conf
+                fi
+                # Then always append setting to file
+                echo "${setting}=${value}" >> "${NEO4J_HOME}"/conf/neo4j.conf
+            else
+                echo >&2 "WARNING: ${setting} not written to conf file because settings that start with a number are not permitted"
+            fi
+        fi
+    done
+}
+
 
 # copy of the part of the docker-entrypoint.sh script
 # which does the initial user configuratio with custom edits
@@ -123,19 +149,22 @@ restore_neo4j() {
 # we mounted into our external EBS volume
 setup_users() {
     # set the neo4j initial password only if you run the database server
-    if [ "${NEO4J_AUTH:-}" == "none" ]; then
+    if [ "${NEO4J_ADMIN_PASSWORD:-}" == "none" ]; then
         NEO4J_dbms_security_auth__enabled=false
-    elif [[ "${NEO4J_AUTH:-}" == neo4j/* ]]; then
-        password="${NEO4J_AUTH#neo4j/}"
+    elif [ -z "${NEO4J_ADMIN_PASSWORD:-}" ]; then
+        echo >&2 "Missing NEO4J_ADMIN_PASSWORD. If you don't want to configure authentification please set the NEO4J_ADMIN_PASSWORD=none"
+        exit 1
+    else
+        password="${NEO4J_ADMIN_PASSWORD}"
         if [ "${password}" == "neo4j" ]; then
             echo >&2 "Invalid value for password. It cannot be 'neo4j', which is the default."
             exit 1
         fi
         # Will exit with error if users already exist (and print a message explaining that)
-        bin/neo4j-admin set-initial-password "${password}" || true
+        su-exec ${userid} bin/neo4j-admin set-initial-password "${password}" || true
 
         ## Start of custom code block
-        user=neo4j
+        user=neo4j # admin user is always "neo4j"
         guest_user=$(echo ${NEO4J_GUEST_AUTH:-} | cut -d'/' -f1)
         guest_password=$(echo ${NEO4J_GUEST_AUTH:-} | cut -d'/' -f2)
 
@@ -145,11 +174,35 @@ setup_users() {
         NEO4J_USERNAME="${user}" NEO4J_PASSWORD="${password}" GUEST_USERNAME="${guest_user}" GUEST_PASSWORD="${guest_password}" bash /init_db.sh &
         echo "Scheduling init tasks: Done."
         ## Start of custom code block
-
-    elif [ -n "${NEO4J_AUTH:-}" ]; then
-        echo >&2 "Invalid value for NEO4J_AUTH: '${NEO4J_AUTH}'"
-        exit 1
     fi
+
+    unset NEO4J_ADMIN_PASSWORD
+}
+
+configure() {
+    # unset the variable NEO4J_dbms_directories_logs, which is set by parent docker-entrypoint.sh and pointing to /logs
+    NEO4J_dbms_directories_logs=$NEO4J_HOME/logs
+
+    # setting custom variables
+    # high availability cluster settings.
+    NEO4J_dbms_mode=${NEO4J_dbms_mode:-HA}
+
+    NEO4J_ha_server__id=${NEO4J_ha_serverId:-$SERVER_ID}
+    NEO4J_ha_initial__hosts=${NEO4J_ha_initialHosts:-$CLUSTER_IPS}
+    NEO4J_ha_pull__interval=${NEO4J_ha_pull__interval:-5s}
+    NEO4J_ha_tx__push__factor=${NEO4J_ha_tx__push__factor:-1}
+    NEO4J_ha_join__timeout=${NEO4J_ha_join__timeout:-2m}
+    NEO4J_dbms_backup_address=${NEO4J_dbms_backup_address:-0.0.0.0:6362}
+    NEO4J_dbms_allow__upgrade=${NEO4J_dbms_allow__upgrade:-false}
+    NEO4J_apoc_export_file_enabled=true
+
+    # not configurable for now.
+    NEO4J_ha_tx__push__strategy=fixed_ascending
+    NEO4J_dbms_security_procedures_unrestricted=apoc.*
+
+    # this allows master/slave health/status endpoints to be open for ELB
+    # without basic auth.
+    NEO4J_dbms_security_ha__status__auth__enabled=false
 }
 
 # get more info from AWS environment:
@@ -180,29 +233,6 @@ ln -s $NEO4J_DATA_ROOT/data $NEO4J_HOME/data
 ln -s $NEO4J_DATA_ROOT/logs $NEO4J_HOME/logs
 ln -s $NEO4J_DATA_ROOT/metrics $NEO4J_HOME/metrics
 
-# unset the variable NEO4J_dbms_directories_logs, which is set by parent docker-entrypoint.sh and pointing to /logs
-unset NEO4J_dbms_directories_logs
-
-# setting custom variables
-# high availability cluster settings.
-NEO4J_dbms_mode=${NEO4J_dbms_mode:-HA}
-
-NEO4J_ha_server__id=${NEO4J_ha_serverId:-$SERVER_ID}
-NEO4J_ha_initial__hosts=${NEO4J_ha_initialHosts:-$CLUSTER_IPS}
-NEO4J_ha_pull__interval=${NEO4J_ha_pull__interval:-5s}
-NEO4J_ha_tx__push__factor=${NEO4J_ha_tx__push__factor:-1}
-NEO4J_ha_join__timeout=${NEO4J_ha_join__timeout:-2m}
-NEO4J_dbms_backup_address=${NEO4J_dbms_backup_address:-0.0.0.0:6362}
-NEO4J_dbms_allow__upgrade=${NEO4J_dbms_allow__upgrade:-false}
-NEO4J_apoc_export_file_enabled=true
-
-# not configurable for now.
-NEO4J_ha_tx__push__strategy=fixed_ascending
-NEO4J_dbms_security_procedures_unrestricted=apoc.*
-
-# this allows master/slave health/status endpoints to be open for ELB
-# without basic auth.
-NEO4J_dbms_security_ha__status__auth__enabled=false
 
 # starting neo4j on "start" parameter
 # we need custom parameter, different from the default one "neo4j"
@@ -214,7 +244,14 @@ if [ "${cmd}" == "start" ]; then
     # get all IPs of this autoscaling group to build ha.initial_hosts of the cluster.
     get_cluster_node_ips
 
+    # setup admin and guest userss
     setup_users
+
+    # set needed configuration variables
+    configure
+
+    # save configuration variables to the config file
+    save_config
 
     if [ -n "${SNAPSHOT_PATH:-}" ]; then
         restore_neo4j
@@ -243,7 +280,7 @@ elif [ "${cmd}" == "backup" ]; then
     fi
 
     echo "Creating Neo4j DB backup"
-    /var/lib/neo4j/bin/neo4j-admin backup --backup-dir=$BACKUP_DIR/ --name=$BACKUP_NAME --from=$BACKUP_FROM
+    su-exec ${userid} bin/neo4j-admin backup --backup-dir=$BACKUP_DIR/ --name=$BACKUP_NAME --from=$BACKUP_FROM
 
     BACKUP_FILE=$BACKUP_NAME-$(date +%s).zip
 

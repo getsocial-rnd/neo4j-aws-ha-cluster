@@ -424,8 +424,8 @@ Resources:
               Value: "1"
             - Name: NEO4J_ha_pull__interval
               Value: "0"
-            - Name: NEO4J_AUTH
-              Value: !Join ["", [!Ref AdminUser, "/", !Ref AdminPassword]]
+            - Name: NEO4J_ADMIN_PASSWORD
+              Value: !Ref AdminPassword
             - Name: NEO4J_GUEST_AUTH
               Value: !Join ["", [!Ref GuestUser, "/", !Ref GuestPassword]]
             - Name: SNAPSHOT_PATH
@@ -499,8 +499,8 @@ Resources:
                 - MemoryMap
                 - !Ref "SlaveOnlyInstanceType"
                 - "JavaPageSlave"
-            - Name: NEO4J_AUTH
-              Value: !Join ["", [!Ref AdminUser, "/", !Ref AdminPassword]]
+            - Name: NEO4J_ADMIN_PASSWORD
+              Value: !Ref AdminPassword
             - Name: NEO4J_GUEST_AUTH
               Value: !Join ["", [!Ref GuestUser, "/", !Ref GuestPassword]]
             - Name: SNAPSHOT_PATH
