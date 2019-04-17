@@ -1,8 +1,8 @@
-## Upgrade guide
+# Upgrade guide
 
 Information below is up-to-date with Neo4j 3.4.6.
 
-### Patch version upgrades
+## Patch version upgrades
 
 If you upgrade between patch versions, you might use
 [rolling upgrade](https://neo4j.com/docs/operations-manual/current/upgrade/causal-cluster/#cc-upgrade-rolling)
@@ -10,8 +10,7 @@ just by updating each instance separately. However it is possible *only when a s
 
 One step: build a new version of docker image (based on newest official Neo4j Docker image), and use that image in CloudFormation (see step #1 in Generic Upgrades section below).
 
-
-### Generic upgrades
+## Generic upgrades
 
 (Based on [official Neo4j guide](https://neo4j.com/docs/operations-manual/current/upgrade/))
 
@@ -19,15 +18,14 @@ Moves between minor/major versions do not allow zero-downtime (as of the 3.4.6) 
 
 You want to make use of CloudFormation (CF) parameters to tweak upgrade steps, as follows below.
 
-### Preconditions
+## Preconditions
 
 - Time of day with lowest graph load
 - Client-side retry system or logging of all queries, in order to not lose write queries.
 - Build neo4j docker image with new version and have it in ECS.
 - AWS console open.
 
-
-### Migration
+## Migration
 
 1. Update CF stack with parameters:
 
@@ -35,9 +33,7 @@ You want to make use of CloudFormation (CF) parameters to tweak upgrade steps, a
 
     This will roll updates to cluster. If during this master fails over to another node, client might spot couple seconds window.
 
-
-
-2. Update CF stack with parameters:
+1. Update CF stack with parameters:
 
         Mode = SINGLE
         SlaveMode = SINGLE
@@ -53,26 +49,22 @@ You want to make use of CloudFormation (CF) parameters to tweak upgrade steps, a
 
     Verify it's working properly. Good idea is to roll client tests since this is a final upgraded DB.
 
-
-3. Manual migrations (if needed).
+1. Manual migrations (if needed).
 
     If upgrade process involves index recreation or other migration to data, that needs to be done manually, it's the right time to do it.
 
-
-4. Update CF stack with parameters:
+1. Update CF stack with parameters:
 
         Mode = HA (but keep SlaveMode = SINGLE)
         AllowUpgrade = False
 
     Verify your single master is fine as HA node. Again downtime since master reboots.
 
-
-5. Change "Name" tags for all slave Neo4j data volumes.
+1. Change "Name" tags for all slave Neo4j data volumes.
 
     For example "neo4j-production-data" → "neo4j-production-data-old". We don't need data volumes with old DB on slaves, with changed name nodes won't use old volumes after reboot.
 
-
-6. (Optional) Create slave copies of master's migrated volume.
+1. (Optional) Create slave copies of master's migrated volume.
 
     If DB is big, this step is useful. Without it slave nodes will start on fresh DB and will need to catch up with master in online mode.
 
@@ -80,21 +72,17 @@ You want to make use of CloudFormation (CF) parameters to tweak upgrade steps, a
 
     Still during boot of node, Neo4j might refuse to use your volume as too old, Neo will simply throw out the data and catch up with master online 
 
-
-
-7. Update CF stack with parameters: (N = 2 for example)
+1. Update CF stack with parameters: (N = 2 for example)
 
         MaxSize = N
         DesiredCapacity = N
 
     Will upscale cluster and create new slaves, that will catch up.
 
-
-8. Update CF stack with parameters:
+1. Update CF stack with parameters:
 
         SlaveMode = HA
 
     Will reboot read-only slave as HA member, hooking up to new volume.
-
 
     Verify both main cluster and slave-only node are working properly, roll tests. Upgrade complete :)

@@ -3,6 +3,10 @@ Parameters:
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Description: Name of an existing EC2 KeyPair to enable SSH access to the ECS instances.
+  ECSAMI:
+    Description: AMI ID
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2/amzn2-ami-ecs-hvm-2.0.20190301-x86_64-ebs/image_id
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: Select a VPC that allows instances access to the Internet.
@@ -69,6 +73,8 @@ Parameters:
       [
         t2.medium,
         t2.large,
+        t3.medium,
+        t3.large,
         m3.medium,
         m3.large,
         m3.xlarge,
@@ -95,6 +101,8 @@ Parameters:
       [
         t2.medium,
         t2.large,
+        t3.medium,
+        t3.large,
         m3.medium,
         m3.large,
         m3.xlarge,
@@ -144,37 +152,6 @@ Parameters:
     Default: no
     AllowedValues: [yes, no]
 Mappings:
-  AWSRegionToAMI:
-    us-east-2:
-      AMIID: ami-956e52f0
-    us-east-1:
-      AMIID: ami-5253c32d
-    us-west-2:
-      AMIID: ami-d2f489aa
-    us-west-1:
-      AMIID: ami-6b81980b
-    eu-west-2:
-      AMIID: ami-3622cf51
-    eu-west-3:
-      AMIID: ami-ca75c4b7
-    eu-west-1:
-      AMIID: ami-c91624b0
-    eu-central-1:
-      AMIID: ami-10e6c8fb
-    ap-northeast-2:
-      AMIID: ami-7c69c112
-    ap-northeast-1:
-      AMIID: ami-f3f8098c
-    ap-southeast-2:
-      AMIID: ami-bc04d5de
-    ap-southeast-1:
-      AMIID: ami-b75a6acb
-    ca-central-1:
-      AMIID: ami-da6cecbe
-    ap-south-1:
-      AMIID: ami-c7072aa8
-    sa-east-1:
-      AMIID: ami-a1e2becd
   MemoryMap:
     t2.medium: # 4 GB total
       ContainerMemory: 3700
@@ -401,35 +378,48 @@ Resources:
       Family: !Sub "${AWS::StackName}-cluster"
       NetworkMode: host
       Volumes:
-        - Name: devices
-          Host:
-            SourcePath: "/dev"
+        - Name: !Sub ${AWS::StackName}-data
+          DockerVolumeConfiguration:
+            Scope: shared
+            Autoprovision: true
+            Driver: rexray/ebs
+            DriverOpts:
+              volumetype: !Ref EBSType
+              size: !Ref EBSSize
       ContainerDefinitions:
         - Name: neo4j
           Essential: "true"
-          Privileged: "true"
           Image: !Ref "DockerImage"
           MemoryReservation:
-            !FindInMap [
-              MemoryMap,
-              !Ref "ClusterInstanceType",
-              "ContainerMemory",
-            ]
+            Fn::FindInMap:
+            - MemoryMap
+            - !Ref "ClusterInstanceType"
+            - "ContainerMemory"
           MountPoints:
-            - ContainerPath: /dev
-              SourceVolume: devices
-              ReadOnly: false
+          - ContainerPath: /neo4j
+            SourceVolume: !Sub ${AWS::StackName}-data
+            ReadOnly: false
           Environment:
+            - Name: NEO4J_DATA_ROOT
+              Value: /neo4j
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
             - Name: NEO4J_dbms_allow__upgrade
               Value: !Ref AllowUpgrade
             - Name: NEO4J_dbms_mode
               Value: !Ref Mode
             - Name: NEO4J_dbms_memory_heap_maxSize
               Value:
-                !FindInMap [MemoryMap, !Ref "ClusterInstanceType", "JavaHeap"]
+                Fn::FindInMap:
+                - MemoryMap
+                - !Ref "ClusterInstanceType"
+                - "JavaHeap"
             - Name: NEO4J_dbms_memory_pagecache_size
               Value:
-                !FindInMap [MemoryMap, !Ref "ClusterInstanceType", "JavaPage"]
+                Fn::FindInMap: 
+                 - MemoryMap
+                 - !Ref "ClusterInstanceType"
+                 - "JavaPage"
             - Name: NEO4J_ha_tx__push__factor
               Value: "1"
             - Name: NEO4J_ha_pull__interval
@@ -438,16 +428,14 @@ Resources:
               Value: !Join ["", [!Ref AdminUser, "/", !Ref AdminPassword]]
             - Name: NEO4J_GUEST_AUTH
               Value: !Join ["", [!Ref GuestUser, "/", !Ref GuestPassword]]
-            - Name: NEO4J_EBS_TYPE
-              Value: !Ref EBSType
-            - Name: NEO4J_EBS_SIZE
-              Value: !Ref EBSSize
             - Name: SNAPSHOT_PATH
               Value: !Ref SnapshotPath
             - Name: AWS_BACKUP_BUCKET
               Value: !Ref BackupBucket
             - Name: STACK_NAME
               Value: !Ref AWS::StackName
+            - Name: STACK_ID
+              Value: !Ref AWS::StackId
             - Name: NEO4J_ACCEPT_LICENSE_AGREEMENT
               Value: !If [AcceptedLicense, "yes", "no"]
           Ulimits:
@@ -460,9 +448,14 @@ Resources:
       Family: !Sub "${AWS::StackName}-slave-only"
       NetworkMode: host
       Volumes:
-        - Name: devices
-          Host:
-            SourcePath: "/dev"
+        - Name: !Sub ${AWS::StackName}-data
+          DockerVolumeConfiguration:
+            Scope: shared
+            Autoprovision: true
+            Driver: rexray/ebs
+            DriverOpts:
+              volumetype: !Ref EBSType
+              size: !Ref EBSSize
         - Name: exports
           Host:
             SourcePath: "/tmp/exports"
@@ -472,19 +465,22 @@ Resources:
           Privileged: "true"
           Image: !Ref "DockerImage"
           Memory:
-            !FindInMap [
-              MemoryMap,
-              !Ref "SlaveOnlyInstanceType",
-              "ContainerMemorySlave",
-            ]
+            Fn::FindInMap:
+            - MemoryMap
+            - !Ref "SlaveOnlyInstanceType"
+            - "ContainerMemorySlave"
           MountPoints:
+            - ContainerPath: /neo4j
+              SourceVolume: !Sub ${AWS::StackName}-data
+              ReadOnly: false
             - ContainerPath: /tmp/exports
               SourceVolume: exports
               ReadOnly: false
-            - ContainerPath: /dev
-              SourceVolume: devices
-              ReadOnly: false
           Environment:
+            - Name: NEO4J_DATA_ROOT
+              Value: /neo4j
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
             - Name: NEO4J_ha_slave__only
               Value: true
             - Name: NEO4J_dbms_allow__upgrade
@@ -493,32 +489,28 @@ Resources:
               Value: !Ref SlaveMode
             - Name: NEO4J_dbms_memory_heap_maxSize
               Value:
-                !FindInMap [
-                  MemoryMap,
-                  !Ref "SlaveOnlyInstanceType",
-                  "JavaHeapSlave",
-                ]
+                Fn::FindInMap:
+                - MemoryMap
+                - !Ref "SlaveOnlyInstanceType"
+                - "JavaHeapSlave"
             - Name: NEO4J_dbms_memory_pagecache_size
               Value:
-                !FindInMap [
-                  MemoryMap,
-                  !Ref "SlaveOnlyInstanceType",
-                  "JavaPageSlave",
-                ]
+                Fn::FindInMap:
+                - MemoryMap
+                - !Ref "SlaveOnlyInstanceType"
+                - "JavaPageSlave"
             - Name: NEO4J_AUTH
               Value: !Join ["", [!Ref AdminUser, "/", !Ref AdminPassword]]
             - Name: NEO4J_GUEST_AUTH
               Value: !Join ["", [!Ref GuestUser, "/", !Ref GuestPassword]]
-            - Name: NEO4J_EBS_TYPE
-              Value: !Ref EBSType
-            - Name: NEO4J_EBS_SIZE
-              Value: !Ref EBSSize
             - Name: SNAPSHOT_PATH
               Value: !Ref SnapshotPath
             - Name: AWS_BACKUP_BUCKET
               Value: !Ref BackupBucket
             - Name: STACK_NAME
               Value: !Ref AWS::StackName
+            - Name: STACK_ID
+              Value: !Ref AWS::StackId
             - Name: SLAVE_MODE
               Value: !Ref SlaveMode
             - Name: NEO4J_ACCEPT_LICENSE_AGREEMENT
@@ -654,7 +646,7 @@ Resources:
                 root            soft    nofile  400000
                 root            hard    nofile  400000
     Properties:
-      ImageId: !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", AMIID]
+      ImageId: !Ref ECSAMI
       SecurityGroups: !Split
         - ","
         - !Sub
@@ -665,13 +657,21 @@ Resources:
       KeyName: !Ref "KeyName"
       UserData:
         Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          echo ECS_CLUSTER=${Neo4jCluster} >> /etc/ecs/ecs.config
-          yum install -y aws-cfn-bootstrap
-          # Run cfn-init
-          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jClusterLanuchConfig --region ${AWS::Region}
-          # Signal success
-          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jClusterAutoScalingGroup --region ${AWS::Region}
+          #cloud-config
+          packages:
+          - aws-cfn-bootstrap
+          - jq
+          - htop
+          - vim
+          write_files:
+            - path: /etc/ecs/ecs.config
+              append: true
+              content: |
+                ECS_CLUSTER=${Neo4jCluster}
+          runcmd:
+            - [ docker, plugin, install, rexray/ebs, --grant-all-permissions ]
+            - /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jClusterLanuchConfig --region ${AWS::Region}
+            - /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jClusterAutoScalingGroup --region ${AWS::Region}
   Neo4jSlaveOnlyLanuchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Metadata:
@@ -685,20 +685,32 @@ Resources:
                 root            soft    nofile  400000
                 root            hard    nofile  400000
     Properties:
-      ImageId: !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", AMIID]
-      SecurityGroups: [!Ref "Neo4jSecurityGroup"]
+      ImageId: !Ref ECSAMI
+      SecurityGroups: !Split
+        - ","
+        - !Sub
+          - "${idList},${Neo4jSecurityGroup}"
+          - idList: !Join [",", !Ref "NodeSecurityGroups"]
       InstanceType: !Ref "SlaveOnlyInstanceType"
       IamInstanceProfile: !Ref "Neo4jInstanceProfile"
       KeyName: !Ref "KeyName"
       UserData:
         Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          echo ECS_CLUSTER=${Neo4jSlaveOnly} >> /etc/ecs/ecs.config
-          yum install -y aws-cfn-bootstrap
-          # Run cfn-init
-          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jSlaveOnlyLanuchConfig --region ${AWS::Region}
-          # Signal success
-          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jSlaveOnlyAutoScalingGroup --region ${AWS::Region}
+          #cloud-config
+          packages:
+          - aws-cfn-bootstrap
+          - jq
+          - htop
+          - vim
+          write_files:
+            - path: /etc/ecs/ecs.config
+              append: true
+              content: |
+                ECS_CLUSTER=${Neo4jSlaveOnly}
+          runcmd:
+            - [ docker, plugin, install, rexray/ebs, --grant-all-permissions ]
+            - /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jSlaveOnlyLanuchConfig --region ${AWS::Region}
+            - /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jSlaveOnlyAutoScalingGroup --region ${AWS::Region}
   Neo4jClusterECSservice:
     Type: AWS::ECS::Service
     DependsOn: Neo4jClusterELB
@@ -759,11 +771,6 @@ Resources:
                   - "ecs:Submit*"
                   - "autoscaling:Describe*"
                   - "ecr:GetAuthorizationToken"
-                  ## needed for Neo4j startup script to run on a neo4j-data EBS volume.
-                  - "ec2:Describe*"
-                  - "ec2:AttachVolume"
-                  - "ec2:CreateVolume"
-                  - "ec2:CreateTags"
                 Resource: "*"
               - Effect: Allow
                 Action:
@@ -783,6 +790,30 @@ Resources:
                   - "s3:PutObject"
                   - "s3:GetObject"
                 Resource: !Sub "${BackupBucket.Arn}/*"
+        - PolicyName: rexray-ebs
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateVolume
+                  - ec2:AttachVolume
+                  - ec2:CreateSnapshot
+                  - ec2:CreateTags
+                  - ec2:DeleteVolume
+                  - ec2:DeleteSnapshot
+                  - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeVolumeAttribute
+                  - ec2:DescribeVolumeStatus
+                  - ec2:DescribeSnapshots
+                  - ec2:CopySnapshot
+                  - ec2:DescribeSnapshotAttribute
+                  - ec2:DetachVolume
+                  - ec2:ModifySnapshotAttribute
+                  - ec2:ModifyVolumeAttribute
+                  - ec2:DescribeTags
+                Resource: "*"
   Neo4jInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
