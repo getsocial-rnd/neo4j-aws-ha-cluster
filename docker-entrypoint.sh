@@ -396,6 +396,8 @@ configure_neo4j() {
     NEO4J_dbms_backup_address=${NEO4J_dbms_backup_address:-0.0.0.0:6362}
     NEO4J_dbms_allow__upgrade=${NEO4J_dbms_allow__upgrade:-false}
     NEO4J_apoc_export_file_enabled=true
+    # using lucene index provider fixes disk leak in the 3.4.6 version
+    NEO4J_dbms_index_default__schema__provider="lucene+native-2.0"
 
     # not configurable for now.
     NEO4J_ha_tx__push__strategy=fixed_ascending
