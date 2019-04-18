@@ -143,7 +143,7 @@ Parameters:
     Description: Mode for Neo4j slave-only mode. Leave HA unless doing Neo4j migration.
     Type: String
     Default: HA
-    AllowedValues: [SINGLE, HA, ARBITER, CORE, READ_REPLICA]
+    AllowedValues: [SINGLE, HA, ARBITER, CORE, READ_REPLICA, ABSENT]
   AcceptLicense:
     Description: |
       In order to use Neo4j Enterprise Edition you must accept the license agreement.
@@ -276,6 +276,7 @@ Mappings:
       ContainerMemoryBackup: 45000
       JavaPageBackup: 22500m
 Conditions:
+  SlaveEnabled: !Not [!Equals [!Ref SlaveMode, "ABSENT"]]
   PerformRestore: !Not [!Equals [!Ref SnapshotPath, ""]]
   CreateSNSTopic: !Equals [!Ref SNSTopicArn, ""]
   IsHA: !Equals [!Ref Mode, "HA"]
@@ -287,6 +288,7 @@ Resources:
   Neo4jCluster:
     Type: AWS::ECS::Cluster
   Neo4jSlaveOnly:
+    Condition: SlaveEnabled
     Type: AWS::ECS::Cluster
   Neo4jSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -396,10 +398,16 @@ Resources:
           Essential: "true"
           Image: !Ref "DockerImage"
           MemoryReservation:
-            Fn::FindInMap:
-            - MemoryMap
-            - !Ref "ClusterInstanceType"
-            - "ContainerMemory"
+            Fn::If:  
+            - SlaveEnabled
+            - Fn::FindInMap:
+              - MemoryMap
+              - !Ref "ClusterInstanceType"
+              - ContainerMemory
+            - Fn::FindInMap:
+              - MemoryMap
+              - !Ref "ClusterInstanceType"
+              - ContainerMemorySlave
           MountPoints:
           - ContainerPath: /neo4j
             SourceVolume: !Sub ${AWS::StackName}-data
@@ -415,16 +423,28 @@ Resources:
               Value: !Ref Mode
             - Name: NEO4J_dbms_memory_heap_maxSize
               Value:
-                Fn::FindInMap:
-                - MemoryMap
-                - !Ref "ClusterInstanceType"
-                - "JavaHeap"
+                Fn::If:  
+                - SlaveEnabled
+                - Fn::FindInMap:
+                  - MemoryMap
+                  - !Ref "ClusterInstanceType"
+                  - JavaHeap
+                - Fn::FindInMap:
+                  - MemoryMap
+                  - !Ref "ClusterInstanceType"
+                  - JavaHeapSlave
             - Name: NEO4J_dbms_memory_pagecache_size
               Value:
-                Fn::FindInMap: 
-                 - MemoryMap
-                 - !Ref "ClusterInstanceType"
-                 - "JavaPage"
+                Fn::If:  
+                - SlaveEnabled
+                - Fn::FindInMap:
+                  - MemoryMap
+                  - !Ref "ClusterInstanceType"
+                  - JavaPage
+                - Fn::FindInMap:
+                  - MemoryMap
+                  - !Ref "ClusterInstanceType"
+                  - JavaPageSlave
             - Name: NEO4J_ha_tx__push__factor
               Value: "1"
             - Name: NEO4J_ha_pull__interval
@@ -448,6 +468,7 @@ Resources:
               HardLimit: 400000
               SoftLimit: 400000
   Neo4jSlaveOnlyTask:
+    Condition: SlaveEnabled
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub "${AWS::StackName}-slave-only"
@@ -547,6 +568,7 @@ Resources:
       ConnectionSettings:
         IdleTimeout: 3600
   Neo4jSlaveOnlyELB:
+    Condition: SlaveEnabled
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     Properties:
       Scheme: internal
@@ -596,6 +618,7 @@ Resources:
     #   AutoScalingReplacingUpdate:
     #     WillReplace: 'true'
   Neo4jSlaveOnlyAutoScalingGroup:
+    Condition: SlaveEnabled
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       VPCZoneIdentifier: 
@@ -632,6 +655,7 @@ Resources:
         HostedZoneId: !GetAtt Neo4jClusterELB.CanonicalHostedZoneNameID
         DNSName: !GetAtt Neo4jClusterELB.DNSName
   Neo4jSlaveOnlyELBDomain:
+    Condition: SlaveEnabled
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneId: !Ref DomainHostedZone
@@ -680,6 +704,7 @@ Resources:
             - /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jClusterLanuchConfig --region ${AWS::Region}
             - /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jClusterAutoScalingGroup --region ${AWS::Region}
   Neo4jSlaveOnlyLanuchConfig:
+    Condition: SlaveEnabled
     Type: AWS::AutoScaling::LaunchConfiguration
     Metadata:
       AWS::CloudFormation::Init:
@@ -730,6 +755,7 @@ Resources:
       PlacementConstraints:
         - Type: distinctInstance ## aka OneTaskPerHost
   Neo4jSlaveOnlyECSservice:
+    Condition: SlaveEnabled
     Type: AWS::ECS::Service
     DependsOn: Neo4jSlaveOnlyELB
     Properties:
@@ -841,11 +867,10 @@ Resources:
           Essential: "true"
           Image: !Ref "DockerImage"
           Memory:
-            !FindInMap [
-              MemoryMap,
-              !Ref "ClusterInstanceType",
-              "ContainerMemoryBackup",
-            ]
+            Fn::FindInMap:
+            - MemoryMap
+            - !Ref "ClusterInstanceType"
+            - "ContainerMemoryBackup"
           MountPoints:
             - ContainerPath: /tmp
               SourceVolume: backups
@@ -853,11 +878,10 @@ Resources:
           Environment:
             - Name: NEO4J_dbms_memory_pagecache_size
               Value:
-                !FindInMap [
-                  MemoryMap,
-                  !Ref "ClusterInstanceType",
-                  "JavaPageBackup",
-                ]
+                Fn::FindInMap:
+                - MemoryMap
+                - !Ref "ClusterInstanceType"
+                - "JavaPageBackup"
             - Name: BACKUP_DIR
               Value: "/tmp"
             - Name: BACKUP_FROM
@@ -892,7 +916,7 @@ Resources:
       ScheduleExpression: rate(1 hour)
       State: ENABLED
       Targets:
-        - Arn: !GetAtt Neo4jSlaveOnly.Arn
+        - Arn: !If ["SlaveEnabled", !GetAtt Neo4jSlaveOnly.Arn, !GetAtt Neo4jCluster.Arn ] 
           Id: !Sub "${AWS::StackName}-backup-cluster"
           EcsParameters:
             TaskCount: 1
@@ -954,6 +978,7 @@ Resources:
       AlarmActions:
         - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
   Neo4jSlaveOnlyHighMemory:
+    Condition: SlaveEnabled
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub "${AWS::StackName}-slave-only-high-mem"
@@ -971,6 +996,7 @@ Resources:
       AlarmActions:
         - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
   Neo4jSlaveOnlyHighCPU:
+    Condition: SlaveEnabled
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub "${AWS::StackName}-slave-only-high-cpu"
@@ -1005,6 +1031,7 @@ Resources:
       AlarmActions:
         - !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
   Neo4jSlaveOnlyHealthyHostCountAlarm:
+    Condition: SlaveEnabled
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub "${AWS::StackName}-slave-only-healthy-host-count"
@@ -1099,6 +1126,7 @@ Outputs:
     Description: ELB DNS Endpoint
     Value: !Join [" ", [!GetAtt Neo4jClusterELB.DNSName, !Ref Neo4jClusterELB]]
   Neo4jSlaveOnlyELB:
+    Condition: SlaveEnabled
     Description: ELB DNS Endpoint
     Value:
       !Join [" ", [!GetAtt Neo4jSlaveOnlyELB.DNSName, !Ref Neo4jSlaveOnlyELB]]
