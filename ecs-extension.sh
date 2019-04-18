@@ -45,9 +45,6 @@ get_cluster_node_ips() {
 
     local count=0
 
-# An error occurred (InvalidInstanceID.Malformed) when calling the DescribeInstances operation: Invalid id: "10.10.1.202"
-# /ecs-extension.sh: line 57: parts[0]: unbound variable
-
     for ID in $ips;
     do
         local result=$(aws ec2 describe-instances --instance-ids $ID  \
@@ -60,7 +57,7 @@ get_cluster_node_ips() {
         local IP="${parts[0]}"
         local slave_only="${parts[1]}"
 
-        if [ "$IP" == "" ] ; then
+        if [ "$IP" == "" || "$IP" == "None" ] ; then
             continue
         fi
 
@@ -189,8 +186,6 @@ configure() {
 
     NEO4J_ha_server__id=${NEO4J_ha_serverId:-$SERVER_ID}
     NEO4J_ha_initial__hosts=${NEO4J_ha_initialHosts:-$CLUSTER_IPS}
-    NEO4J_ha_pull__interval=${NEO4J_ha_pull__interval:-5s}
-    NEO4J_ha_tx__push__factor=${NEO4J_ha_tx__push__factor:-1}
     NEO4J_ha_join__timeout=${NEO4J_ha_join__timeout:-2m}
     NEO4J_dbms_backup_address=${NEO4J_dbms_backup_address:-0.0.0.0:6362}
     NEO4J_dbms_allow__upgrade=${NEO4J_dbms_allow__upgrade:-false}
@@ -198,8 +193,13 @@ configure() {
     NEO4J_dbms_index_default__schema__provider="lucene+native-2.0"
 
     # not configurable for now.
-    NEO4J_ha_tx__push__strategy=fixed_ascending
     NEO4J_dbms_security_procedures_unrestricted=apoc.*
+
+    # TODO: review following depreacated parameters
+    NEO4J_dbms_security_ha__status__auth__enabled=false
+    NEO4J_ha_pull__interval=${NEO4J_ha_pull__interval:-5s}
+    NEO4J_ha_tx__push__factor=${NEO4J_ha_tx__push__factor:-1}
+    NEO4J_ha_tx__push__strategy=fixed_ascending
 }
 
 # get more info from AWS environment:

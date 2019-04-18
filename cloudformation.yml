@@ -13,6 +13,11 @@ Parameters:
   SubnetID:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Select at two subnets in your selected VPC.
+  # RexRay plugin can't work with many volumes with the same name in the same AZ at the same time
+  # see issue: https://github.com/rexray/rexray/issues/1314
+  SlaveSubnetID:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet to place the Slave in, should be different from the Write node subnets
   NodeSecurityGroups:
     Type: List<AWS::EC2::SecurityGroup::Id>
     Description: Select at least one additional security group to apply to Neo4j nodes (e.g. your SSH group)
@@ -545,7 +550,8 @@ Resources:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     Properties:
       Scheme: internal
-      Subnets: !Ref "SubnetID"
+      Subnets: 
+      - !Ref "SlaveSubnetID"
       Listeners:
         - LoadBalancerPort: "7687"
           InstancePort: "7687"
@@ -592,7 +598,8 @@ Resources:
   Neo4jSlaveOnlyAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      VPCZoneIdentifier: !Ref "SubnetID"
+      VPCZoneIdentifier: 
+      - !Ref "SlaveSubnetID"
       LaunchConfigurationName: !Ref "Neo4jSlaveOnlyLanuchConfig"
       MinSize: "1"
       MaxSize: "1"
@@ -669,7 +676,7 @@ Resources:
               content: |
                 ECS_CLUSTER=${Neo4jCluster}
           runcmd:
-            - [ docker, plugin, install, rexray/ebs, --grant-all-permissions ]
+            - [ docker, plugin, install, rexray/ebs, --grant-all-permissions, LINUX_VOLUME_ROOTPATH=/, LIBSTORAGE_INTEGRATION_VOLUME_OPERATIONS_MOUNT_ROOTPATH=/ ]
             - /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jClusterLanuchConfig --region ${AWS::Region}
             - /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jClusterAutoScalingGroup --region ${AWS::Region}
   Neo4jSlaveOnlyLanuchConfig:
@@ -708,7 +715,7 @@ Resources:
               content: |
                 ECS_CLUSTER=${Neo4jSlaveOnly}
           runcmd:
-            - [ docker, plugin, install, rexray/ebs, --grant-all-permissions ]
+            - [ docker, plugin, install, rexray/ebs, --grant-all-permissions, LINUX_VOLUME_ROOTPATH=/, LIBSTORAGE_INTEGRATION_VOLUME_OPERATIONS_MOUNT_ROOTPATH=/ ]
             - /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Neo4jSlaveOnlyLanuchConfig --region ${AWS::Region}
             - /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Neo4jSlaveOnlyAutoScalingGroup --region ${AWS::Region}
   Neo4jClusterECSservice:
