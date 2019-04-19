@@ -888,8 +888,6 @@ Resources:
               Value: this_instance
             - Name: AWS_BACKUP_BUCKET
               Value: !Ref BackupBucket
-            - Name: STACK_NAME
-              Value: !Ref AWS::StackName
             - Name: NEO4J_ACCEPT_LICENSE_AGREEMENT
               Value: !If [AcceptedLicense, "yes", "no"]
   BackupBucket:
@@ -1053,33 +1051,20 @@ Resources:
     Properties:
       Name: !Sub "${AWS::StackName}-ecs-task-monitor"
       Description: "Event to notify us of changed status of ECS Task"
+      State: ENABLED
       EventPattern: !Sub |
         {
-          "source": [
-            "aws.ecs"
-          ],
-          "detail-type": [
-            "ECS Task State Change"
-          ],
-          "detail": {
-            "clusterArn": [
-              "${Neo4jCluster.Arn}"
-            ],
-            "taskDefinitionArn": [
-              "${Neo4jClusterTask}"
-            ],
-            "stoppedReason": ["Essential container in task exited"]
-          }
-        }
-      State: ENABLED
-      Targets:
-        - Arn: !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
-          Id: !Sub "${AWS::StackName}-ecs-task-monitor"
-          Input: !Sub |
-            {
-              "message": "Essential container in task exited",
-              "ecs_cluster": "${Neo4jCluster}"
+            "source": ["aws.ecs"],
+            "detail-type": ["ECS Task State Change"],
+            "detail": {
+                "clusterArn": ["${Neo4jCluster.Arn}"],
+                "taskDefinitionArn": ["${Neo4jClusterTask}", "${Neo4jBackupTask}"],
+                "stoppedReason": ["Essential container in task exited"]
             }
+        }
+      Targets:
+      - Arn: !If [CreateSNSTopic, !Ref Neo4jSNSTopic, !Ref SNSTopicArn]
+        Id: !Sub "${AWS::StackName}-ecs-task-monitor"
   TaskMonitorEventSNSPolicy:
     Type: AWS::SNS::TopicPolicy
     Properties:

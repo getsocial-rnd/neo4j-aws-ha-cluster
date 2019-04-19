@@ -1,4 +1,4 @@
-COMMIT=$(shell git rev-parse HEAD)
+COMMIT=taras-$(shell git rev-parse HEAD)
 DATE=$(shell date +%Y-%m-%d-%H-%M)
 
 .PHONY:
@@ -15,3 +15,13 @@ push_image: build
 	@ docker tag neo:latest $(NEO_ECR_REPO):$(COMMIT)
 	@ docker push $(NEO_ECR_REPO):$(COMMIT)
 	@ echo "Pushed image $(NEO_ECR_REPO):$(COMMIT)"
+
+
+.PHONY: create_stack
+create_stack:
+	awless --no-sync --color always \
+            create stack \
+            name=taras-neo-test1-$(DATE) \
+            capabilities=CAPABILITY_IAM \
+            template-file=./cloudformation.yml \
+            stack-file=./config.yml

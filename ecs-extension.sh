@@ -190,7 +190,6 @@ configure() {
     NEO4J_dbms_backup_address=${NEO4J_dbms_backup_address:-0.0.0.0:6362}
     NEO4J_dbms_allow__upgrade=${NEO4J_dbms_allow__upgrade:-false}
     NEO4J_apoc_export_file_enabled=true
-    NEO4J_dbms_index_default__schema__provider="lucene+native-2.0"
 
     # not configurable for now.
     NEO4J_dbms_security_procedures_unrestricted=apoc.*
@@ -200,6 +199,22 @@ configure() {
     NEO4J_ha_pull__interval=${NEO4J_ha_pull__interval:-5s}
     NEO4J_ha_tx__push__factor=${NEO4J_ha_tx__push__factor:-1}
     NEO4J_ha_tx__push__strategy=fixed_ascending
+}
+
+setup_dirs () {
+    # Create all needed folders, etc
+    mkdir -p $NEO4J_DATA_ROOT
+
+    # make sure subdirs exist
+    mkdir -p $NEO4J_DATA_ROOT/data
+    mkdir -p $NEO4J_DATA_ROOT/logs
+    mkdir -p $NEO4J_DATA_ROOT/metrics
+
+    chown -R neo4j:neo4j $NEO4J_DATA_ROOT
+
+    ln -s $NEO4J_DATA_ROOT/data $NEO4J_HOME/data
+    ln -s $NEO4J_DATA_ROOT/logs $NEO4J_HOME/logs
+    ln -s $NEO4J_DATA_ROOT/metrics $NEO4J_HOME/metrics
 }
 
 # get more info from AWS environment:
@@ -216,25 +231,12 @@ BOLT_PORT=7687
 
 BACKUP_NAME=neo4j-backup
 
-# Create all needed folders, etc
-mkdir -p $NEO4J_DATA_ROOT
-
-# make sure subdirs exist
-mkdir -p $NEO4J_DATA_ROOT/data
-mkdir -p $NEO4J_DATA_ROOT/logs
-mkdir -p $NEO4J_DATA_ROOT/metrics
-
-chown -R neo4j:neo4j $NEO4J_DATA_ROOT
-
-ln -s $NEO4J_DATA_ROOT/data $NEO4J_HOME/data
-ln -s $NEO4J_DATA_ROOT/logs $NEO4J_HOME/logs
-ln -s $NEO4J_DATA_ROOT/metrics $NEO4J_HOME/metrics
-
-
 # starting neo4j on "start" parameter
 # we need custom parameter, different from the default one "neo4j"
 # to avoid default initial user creation (see comments to the "setup_users" function)
 if [ "${cmd}" == "start" ]; then
+    setup_dirs
+
     # create server ID, unique to this instance, based on it's private IP's last 2 octets.
     make_server_id
 
@@ -277,7 +279,7 @@ elif [ "${cmd}" == "backup" ]; then
     fi
 
     echo "Creating Neo4j DB backup"
-    su-exec ${userid} bin/neo4j-admin backup --backup-dir=$BACKUP_DIR/ --name=$BACKUP_NAME --from=$BACKUP_FROM
+    bin/neo4j-admin backup --backup-dir=$BACKUP_DIR/ --name=$BACKUP_NAME --from=$BACKUP_FROM
 
     BACKUP_FILE=$BACKUP_NAME-$(date +%s).zip
 
