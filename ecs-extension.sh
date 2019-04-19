@@ -57,7 +57,7 @@ get_cluster_node_ips() {
         local IP="${parts[0]}"
         local slave_only="${parts[1]}"
 
-        if [ "$IP" == "" || "$IP" == "None" ] ; then
+        if [ "$IP" == "" ] || [ "$IP" == "None" ] ; then
             continue
         fi
 
