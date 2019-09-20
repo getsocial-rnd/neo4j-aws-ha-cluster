@@ -1,3 +1,5 @@
+# **DEPRECATED** due to the [deprecation of Neo4j HA clustering](https://neo4j.com/developer/kb/comparing-ha-vs-causal-clusters/), please consider using [Neo4j Causal cluster setup](https://github.com/getsocial-rnd/neo4j-aws-causal-cluster)
+
 # neo4j-aws-ha-cluster
 
 A setup for HA (High-Availability) deployment of a [Neo4j Enterprise](https://neo4j.com/subscriptions/#editions) cluster on top of [AWS ECS](https://aws.amazon.com/ecs/).
