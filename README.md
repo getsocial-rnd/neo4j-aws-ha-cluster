@@ -1,4 +1,4 @@
-# **DEPRECATED** due to the [deprecation of Neo4j HA clustering](https://neo4j.com/developer/kb/comparing-ha-vs-causal-clusters/), please consider using [Neo4j Causal cluster setup](https://github.com/getsocial-rnd/neo4j-aws-causal-cluster)
+# **DEPRECATED** due to the [deprecation of Neo4j HA clustering](https://neo4j.com/developer/kb/comparing-ha-vs-causal-clusters/), please consider using [getsocial-rnd/neo4j-aws-causal-cluster](https://github.com/getsocial-rnd/neo4j-aws-causal-cluster)
 
 # neo4j-aws-ha-cluster
 
